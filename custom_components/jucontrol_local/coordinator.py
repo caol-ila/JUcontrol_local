@@ -22,7 +22,7 @@ _LOGGER = logging.getLogger(__name__)
 
 # The water counters only ever count up. A lower reading is published only
 # after this many polls in a row, so a single bad answer is ignored while a
-# real counter reset or a replaced device still comes through.
+# real counter reset still comes through.
 _COUNTER_DROP_CONFIRM_POLLS = 3
 
 
