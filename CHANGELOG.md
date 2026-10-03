@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Total water and soft water no longer fall to 0 when the device sends an empty or short answer. Home Assistant recorded that as a meter reset and booked the whole counter as consumption. The invalid answer is now logged and the last value is kept
+- A total water or soft water reading below the last value is only accepted once it repeats on three polls in a row, so a single bad reading is ignored and a genuine counter reset still comes through
+
 ## [1.2.2] - 2026-03-22
 
 ### Changed

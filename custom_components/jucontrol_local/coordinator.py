@@ -20,6 +20,11 @@ from .device_types import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# The water counters only ever count up. A lower reading is published only
+# after this many polls in a row, so a single bad answer is ignored while a
+# real counter reset or a replaced device still comes through.
+_COUNTER_DROP_CONFIRM_POLLS = 3
+
 
 class JudoDataCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Coordinator to manage data polling from JUDO device."""
@@ -51,6 +56,7 @@ class JudoDataCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.commissioning_date: str | None = None
         self.service_address: str = ""
         self._initial_fetch_done = False
+        self._counter_drops: dict[str, int] = {}
 
     @property
     def device_family(self) -> DeviceFamily | None:
@@ -83,6 +89,38 @@ class JudoDataCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except (JudoConnectionError, JudoAuthError):
             _LOGGER.warning("Failed to fetch static device data")
 
+    def _check_counter(self, key: str, value: int | None) -> int | None:
+        """Return the counter value to publish for a new reading.
+
+        An invalid reading (None) keeps the last value. A reading below the
+        last value is held back until it repeats for
+        _COUNTER_DROP_CONFIRM_POLLS polls in a row.
+        """
+        last = self.data.get(key) if self.data else None
+        if value is None:
+            return last
+        if last is not None and value < last:
+            drops = self._counter_drops.get(key, 0) + 1
+            if drops < _COUNTER_DROP_CONFIRM_POLLS:
+                self._counter_drops[key] = drops
+                _LOGGER.warning(
+                    "Ignoring %s reading of %s L, below the last value of %s L",
+                    key,
+                    value,
+                    last,
+                )
+                return last
+            _LOGGER.warning(
+                "Accepting %s reading of %s L after %s lower readings in a row "
+                "(was %s L), assuming a counter reset",
+                key,
+                value,
+                drops,
+                last,
+            )
+        self._counter_drops.pop(key, None)
+        return value
+
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch current data from the device."""
         if not self._initial_fetch_done:
@@ -109,10 +147,14 @@ class JudoDataCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 )
 
             if self.has_capability(Capability.TOTAL_WATER):
-                data["total_water"] = await self.client.get_total_water()
+                data["total_water"] = self._check_counter(
+                    "total_water", await self.client.get_total_water()
+                )
 
             if self.has_capability(Capability.SOFT_WATER):
-                data["soft_water"] = await self.client.get_soft_water()
+                data["soft_water"] = self._check_counter(
+                    "soft_water", await self.client.get_soft_water()
+                )
 
             if self.has_capability(Capability.HARDNESS_UNIT):
                 data["hardness_unit"] = await self.client.get_hardness_unit()
