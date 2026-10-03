@@ -21,8 +21,8 @@ from .device_types import (
 _LOGGER = logging.getLogger(__name__)
 
 # The water counters only ever count up. A lower reading is published only
-# after this many polls in a row, so a single bad answer is ignored while a
-# real counter reset still comes through.
+# once it comes on this many consecutive polls, so a single bad answer is
+# ignored while a real counter reset still comes through.
 _COUNTER_DROP_CONFIRM_POLLS = 3
 
 
@@ -56,7 +56,11 @@ class JudoDataCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.commissioning_date: str | None = None
         self.service_address: str = ""
         self._initial_fetch_done = False
-        self._counter_drops: dict[str, int] = {}
+        self._poll_count = 0
+        # Per counter: lower readings in a row, and the poll of the last one
+        self._counter_drops: dict[str, tuple[int, int]] = {}
+        # Counters whose last answer was invalid, to warn once per streak
+        self._counter_invalid: set[str] = set()
 
     @property
     def device_family(self) -> DeviceFamily | None:
@@ -93,16 +97,26 @@ class JudoDataCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Return the counter value to publish for a new reading.
 
         An invalid reading (None) keeps the last value. A reading below the
-        last value is held back until it repeats for
-        _COUNTER_DROP_CONFIRM_POLLS polls in a row.
+        last value is held back until it comes on _COUNTER_DROP_CONFIRM_POLLS
+        consecutive polls; an invalid answer or a failed poll in between
+        starts the count over.
         """
         last = self.data.get(key) if self.data else None
         if value is None:
+            if key not in self._counter_invalid:
+                self._counter_invalid.add(key)
+                _LOGGER.warning(
+                    "Invalid %s answer from the device, keeping the last value %s",
+                    key,
+                    last,
+                )
             return last
+        self._counter_invalid.discard(key)
         if last is not None and value < last:
-            drops = self._counter_drops.get(key, 0) + 1
+            streak, streak_poll = self._counter_drops.get(key, (0, 0))
+            drops = streak + 1 if streak_poll == self._poll_count - 1 else 1
             if drops < _COUNTER_DROP_CONFIRM_POLLS:
-                self._counter_drops[key] = drops
+                self._counter_drops[key] = (drops, self._poll_count)
                 _LOGGER.warning(
                     "Ignoring %s reading of %s L, below the last value of %s L",
                     key,
@@ -123,6 +137,7 @@ class JudoDataCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch current data from the device."""
+        self._poll_count += 1
         if not self._initial_fetch_done:
             await self._fetch_static_data()
             self._initial_fetch_done = True

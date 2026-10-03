@@ -330,7 +330,7 @@ class JudoApiClient:
         """Read total water volume in liters (cmd 0x28), None if invalid."""
         data = await self.send_command("28", "00")
         if not data or len(data) < 8:
-            _LOGGER.warning("Invalid total water response (cmd 0x28): %r", data)
+            _LOGGER.debug("Invalid total water response (cmd 0x28): %r", data)
             return None
         return parse_int_lsb(data, 4)
 
@@ -338,7 +338,7 @@ class JudoApiClient:
         """Read soft water volume in liters (cmd 0x29), None if invalid."""
         data = await self.send_command("29", "00")
         if not data or len(data) < 8:
-            _LOGGER.warning("Invalid soft water response (cmd 0x29): %r", data)
+            _LOGGER.debug("Invalid soft water response (cmd 0x29): %r", data)
             return None
         return parse_int_lsb(data, 4)
 
